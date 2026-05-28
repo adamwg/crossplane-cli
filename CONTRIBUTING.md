@@ -45,6 +45,11 @@ Alpha and beta commands are marked as such using a custom kong struct tag,
 2. Alpha and beta commands automatically have notes added to their help text
    indicating the maturity level and what it means.
 
+If a command is not tagged with a maturity level, it will inherit from its
+parent in the command tree. This means that if you're introducing a whole tree
+of commands into beta, only the parent needs to be tagged. Commands without a
+maturity level anywhere in their tree are considered GA.
+
 Note that in the past alpha and beta commands were put under separate command
 trees (`crossplane alpha` and `crossplane beta`). We have moved away from this
 scheme in order to help keep the command tree and codebase more stable as
@@ -73,10 +78,19 @@ following guidelines in order to make the docs look as good as possible:
   looks good when rendered, and avoids spelling and grammar false positives.
 
 If in doubt about whether your help will look good, you can easily check your
-work by cloning the [crossplane/docs](https://github.com/crossplane/docs) repo,
-running `crossplane generate-docs -o content/master/cli/command-reference.md` to
-update the CLI reference section, and then running `hugo serve` to preview it
-locally.
+work by generating the docs locally:
+
+```shell
+# Clone the docs repository.
+git clone https://github.com/crossplane/docs.git
+cd docs
+
+# Generate the docs.
+crossplane generate-docs -o content/master/cli/command-reference.md
+
+# Build the docs serve them locally for preview.
+hugo serve
+```
 
 ### The `vale` Linter
 
@@ -112,3 +126,4 @@ matches rather than whole rules, and rules rather than whole styles.
 [docs.crossplane.io]: https://docs.crossplane.io/latest/cli/command-reference/
 [vale]: https://vale.sh
 [vale Markdown comments]: https://vale.sh/docs/formats/markdown#comments
+[crossplane/docs]: https://github.com/crossplane/docs
