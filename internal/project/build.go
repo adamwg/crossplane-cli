@@ -183,12 +183,10 @@ func (b *realBuilder) Build(ctx context.Context, project *devv1alpha1.Project, p
 		}
 	}
 
-	functionsSource := afero.NewBasePathFs(projectFS, project.Spec.Paths.Functions)
-
 	// Determine the set of functions to build. If the project explicitly
 	// declares a Functions list we use it verbatim. Otherwise we auto-discover
 	// by listing subdirectories of the functions path.
-	fns, err := resolveFunctions(project, functionsSource)
+	fns, err := resolveFunctions(project, projectFS)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to resolve functions")
 	}
@@ -262,7 +260,7 @@ func (b *realBuilder) Build(ctx context.Context, project *devv1alpha1.Project, p
 
 	// Build the resolved functions.
 	o.log.Debug("Building functions")
-	imgMap, deps, err := b.buildFunctions(ctx, projectFS, functionsSource, project, fns, o.projectBasePath, o.eventCh)
+	imgMap, deps, err := b.buildFunctions(ctx, projectFS, project, fns, o.projectBasePath, o.eventCh)
 	if err != nil {
 		return nil, err
 	}
@@ -317,12 +315,12 @@ func (b *realBuilder) Build(ctx context.Context, project *devv1alpha1.Project, p
 // the project explicitly declares functions, that list is returned verbatim.
 // Otherwise it auto-discovers Directory-source functions by listing
 // subdirectories of the project's functions path.
-func resolveFunctions(project *devv1alpha1.Project, functionsSource afero.Fs) ([]devv1alpha1.Function, error) {
+func resolveFunctions(project *devv1alpha1.Project, projectFS afero.Fs) ([]devv1alpha1.Function, error) {
 	if len(project.Spec.Functions) > 0 {
 		return project.Spec.Functions, nil
 	}
 
-	infos, err := afero.ReadDir(functionsSource, "/")
+	infos, err := afero.ReadDir(projectFS, project.Spec.Paths.Functions)
 	switch {
 	case os.IsNotExist(err):
 		return nil, nil
@@ -344,7 +342,7 @@ func resolveFunctions(project *devv1alpha1.Project, functionsSource afero.Fs) ([
 }
 
 // buildFunctions builds the given list of embedded functions.
-func (b *realBuilder) buildFunctions(ctx context.Context, projectFS, fromFS afero.Fs, project *devv1alpha1.Project, fns []devv1alpha1.Function, basePath string, eventCh async.EventChannel) (ImageTagMap, []xpmetav1.Dependency, error) {
+func (b *realBuilder) buildFunctions(ctx context.Context, projectFS afero.Fs, project *devv1alpha1.Project, fns []devv1alpha1.Function, basePath string, eventCh async.EventChannel) (ImageTagMap, []xpmetav1.Dependency, error) {
 	var (
 		imgMap = make(map[name.Tag]v1.Image)
 		imgMu  sync.Mutex
@@ -366,7 +364,7 @@ func (b *realBuilder) buildFunctions(ctx context.Context, projectFS, fromFS afer
 			eventCh.SendEvent(eventText, async.EventStatusStarted)
 
 			fnRepo := fmt.Sprintf("%s_%s", project.Spec.Repository, fnName)
-			imgs, err := b.buildFunction(ctx, projectFS, fromFS, project, fn, basePath)
+			imgs, err := b.buildFunction(ctx, projectFS, project, fn, basePath)
 			if err != nil {
 				eventCh.SendEvent(eventText, async.EventStatusFailure)
 				return errors.Wrapf(err, "failed to build function %q", fnName)
@@ -419,7 +417,7 @@ func (b *realBuilder) buildFunctions(ctx context.Context, projectFS, fromFS afer
 // buildFunction builds the package images for a single function. It resolves
 // the function's runtime images (either by building from source or by loading
 // a pre-built tarball) and then wraps each one with the package metadata.
-func (b *realBuilder) buildFunction(ctx context.Context, projectFS, functionsFS afero.Fs, project *devv1alpha1.Project, fn devv1alpha1.Function, basePath string) ([]v1.Image, error) {
+func (b *realBuilder) buildFunction(ctx context.Context, projectFS afero.Fs, project *devv1alpha1.Project, fn devv1alpha1.Function, basePath string) ([]v1.Image, error) {
 	fnName := fn.Name()
 	meta := &xpmetav1.Function{
 		TypeMeta: metav1.TypeMeta{
@@ -451,19 +449,15 @@ func (b *realBuilder) buildFunction(ctx context.Context, projectFS, functionsFS 
 	// directory under functions/, so they have no examples to ship.
 	examplesParser := parser.NewEchoBackend("")
 	if fn.Source == devv1alpha1.FunctionSourceDirectory {
-		// Resolve the examples directory relative to functionsFS rather than
-		// wrapping it in another BasePathFs - it joins the path once here
-		// instead of on every file operation, and keeps the path visible to
-		// readers.
-		examplesDir := filepath.Join(fn.Directory.Name, "examples")
-		examplesExist, err := afero.IsDir(functionsFS, examplesDir)
+		examplesDir := filepath.Join(project.Spec.Paths.Functions, fn.Directory.Name, "examples")
+		examplesExist, err := afero.IsDir(projectFS, examplesDir)
 		switch {
 		case err == nil, os.IsNotExist(err):
 		default:
 			return nil, errors.Wrap(err, "failed to check for examples")
 		}
 		if examplesExist {
-			examplesParser = parser.NewFsBackend(functionsFS,
+			examplesParser = parser.NewFsBackend(projectFS,
 				parser.FsDir(examplesDir),
 				parser.FsFilters(parser.SkipNotYAML()),
 			)
@@ -481,7 +475,7 @@ func (b *realBuilder) buildFunction(ctx context.Context, projectFS, functionsFS 
 		examples.New(),
 	)
 
-	runtimeImages, err := b.runtimeImages(ctx, projectFS, functionsFS, project, fn, basePath)
+	runtimeImages, err := b.runtimeImages(ctx, projectFS, project, fn, basePath)
 	if err != nil {
 		return nil, err
 	}
@@ -501,10 +495,10 @@ func (b *realBuilder) buildFunction(ctx context.Context, projectFS, functionsFS 
 // runtimeImages returns the per-architecture runtime images for a function. For
 // Directory-source functions this dispatches to the appropriate builder. For
 // Tarball-source functions it loads the supplied OCI tarball.
-func (b *realBuilder) runtimeImages(ctx context.Context, projectFS, functionsFS afero.Fs, project *devv1alpha1.Project, fn devv1alpha1.Function, basePath string) ([]v1.Image, error) {
+func (b *realBuilder) runtimeImages(ctx context.Context, projectFS afero.Fs, project *devv1alpha1.Project, fn devv1alpha1.Function, basePath string) ([]v1.Image, error) {
 	switch fn.Source {
 	case devv1alpha1.FunctionSourceDirectory:
-		return b.buildDirectoryRuntime(ctx, projectFS, functionsFS, project, fn.Directory, basePath)
+		return b.buildDirectoryRuntime(ctx, projectFS, project, fn.Directory, basePath)
 	case devv1alpha1.FunctionSourceTarball:
 		return loadTarballRuntime(projectFS, fn.Tarball, project.Spec.Architectures)
 	default:
@@ -515,8 +509,8 @@ func (b *realBuilder) runtimeImages(ctx context.Context, projectFS, functionsFS 
 
 // buildDirectoryRuntime invokes the appropriate language builder to produce
 // runtime images from a function's source directory.
-func (b *realBuilder) buildDirectoryRuntime(ctx context.Context, projectFS, functionsFS afero.Fs, project *devv1alpha1.Project, dir *devv1alpha1.FunctionDirectory, basePath string) ([]v1.Image, error) {
-	fnFS := afero.NewBasePathFs(functionsFS, dir.Name)
+func (b *realBuilder) buildDirectoryRuntime(ctx context.Context, projectFS afero.Fs, project *devv1alpha1.Project, dir *devv1alpha1.FunctionDirectory, basePath string) ([]v1.Image, error) {
+	fnFS := afero.NewBasePathFs(projectFS, filepath.Join(project.Spec.Paths.Functions, dir.Name))
 
 	fnBasePath := ""
 	if basePath != "" {

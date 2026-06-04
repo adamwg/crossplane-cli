@@ -377,8 +377,7 @@ func TestResolveFunctions(t *testing.T) {
 			proj.Spec.Repository = "xpkg.crossplane.io/example/test"
 			proj.Default()
 
-			fnsSource := afero.NewBasePathFs(projFS, proj.Spec.Paths.Functions)
-			got, err := resolveFunctions(proj, fnsSource)
+			got, err := resolveFunctions(proj, projFS)
 			if err != nil {
 				t.Fatalf("resolveFunctions: %v", err)
 			}
