@@ -237,8 +237,8 @@ jobs:
         run: |
           cd docs
           diffstat=$(git diff --numstat content/cli/master/command-reference.md)
-          added=$(echo "$diffstat" | awk 'print $1')
-          deleted=$(echo "$diffstat" | awk 'print $1')
+          added=$(echo "$diffstat" | awk '{ print $1 }')
+          deleted=$(echo "$diffstat" | awk '{ print $1 }')
           changed="false"
           if [[ ${added} -ne 1 || ${deleted} -ne 1 ]]; then
             changed="true"
