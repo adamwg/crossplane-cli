@@ -251,6 +251,8 @@ jobs:
         with:
           app-id: ${{ secrets.DOCS_APP_ID }}
           private-key: ${{ secrets.DOCS_PRIVATE_KEY }}
+          owner: adamwg
+          repositories: docs
 
       - name: Create docs PR
         if: ${{ github.ref == 'refs/heads/main' && steps.find-changes.outputs.changed == 'true' }}
