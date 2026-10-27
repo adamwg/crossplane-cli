@@ -31,7 +31,7 @@ import (
 
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
-	"github.com/crossplane/cli/v2/cmd/crossplane/common/resource"
+	"github.com/crossplane/cli/v2/pkg/resource"
 )
 
 type xrcOpt func(c *claim.Unstructured)

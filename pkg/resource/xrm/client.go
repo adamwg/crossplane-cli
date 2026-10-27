@@ -33,7 +33,7 @@ import (
 	"github.com/crossplane/crossplane/apis/v2/apiextensions/v1alpha1"
 	"github.com/crossplane/crossplane/apis/v2/apiextensions/v1beta1"
 
-	"github.com/crossplane/cli/v2/cmd/crossplane/common/resource"
+	"github.com/crossplane/cli/v2/pkg/resource"
 )
 
 // defaultConcurrency is the concurrency using which the resource tree if loaded when not explicitly specified.
