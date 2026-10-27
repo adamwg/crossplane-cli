@@ -1,4 +1,4 @@
-// Package crd provides functions and helpers shared between CLI utilities, available for import by external tools interacting with Crossplane.
+// Package crd provides helpers for converting Crossplane XRDs to CRDs, available for import by external tools interacting with Crossplane.
 package crd
 
 import (
