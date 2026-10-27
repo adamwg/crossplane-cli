@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/afero"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/yaml"
 
@@ -121,6 +122,19 @@ func LoadCredentials(fs afero.Fs, file string) ([]corev1.Secret, error) {
 
 	secrets := make([]corev1.Secret, 0, len(stream))
 	for _, y := range stream {
+		// Check the kind before decoding into a Secret, so that a non-Secret
+		// document (e.g. a ConfigMap with plain-text data) gets a clear error
+		// rather than a confusing base64 decoding failure, or being silently
+		// treated as an empty Secret.
+		m := &metav1.PartialObjectMetadata{}
+		if err := yaml.Unmarshal(y, m); err != nil {
+			return nil, errors.Wrap(err, "cannot parse YAML secret manifest")
+		}
+
+		if gvk := m.GroupVersionKind(); gvk != corev1.SchemeGroupVersion.WithKind("Secret") {
+			return nil, errors.Errorf("%s/%s is not a v1 Secret", gvk.Kind, m.GetName())
+		}
+
 		s := &corev1.Secret{}
 		if err := yaml.Unmarshal(y, s); err != nil {
 			return nil, errors.Wrap(err, "cannot parse YAML secret manifest")

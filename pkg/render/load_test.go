@@ -25,6 +25,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/spf13/afero"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -324,6 +325,68 @@ func TestLoadFunctions(t *testing.T) {
 
 			if diff := cmp.Diff(tc.want.err, err, cmpopts.EquateErrors()); diff != "" {
 				t.Errorf("LoadFunctions(..), -want, +got:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestLoadCredentials(t *testing.T) {
+	fs := afero.FromIOFS{FS: testdatafs}
+
+	type want struct {
+		secrets []corev1.Secret
+		err     string
+	}
+
+	cases := map[string]struct {
+		file string
+		want want
+	}{
+		"Success": {
+			file: "testdata/credentials.yaml",
+			want: want{
+				secrets: []corev1.Secret{
+					{
+						TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+						ObjectMeta: metav1.ObjectMeta{Name: "creds-a"},
+						Data:       map[string][]byte{"token": []byte("secret")},
+					},
+					{
+						TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+						ObjectMeta: metav1.ObjectMeta{Name: "creds-b"},
+						StringData: map[string]string{"password": "hunter2"},
+					},
+				},
+			},
+		},
+		"ConfigMapWithPlainTextData": {
+			file: "testdata/credentials-configmap.yaml",
+			want: want{
+				err: "ConfigMap/not-a-secret is not a v1 Secret",
+			},
+		},
+		"DeploymentWithNoData": {
+			file: "testdata/credentials-deployment.yaml",
+			want: want{
+				err: "Deployment/not-a-secret is not a v1 Secret",
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			secrets, err := LoadCredentials(fs, tc.file)
+
+			if diff := cmp.Diff(tc.want.secrets, secrets); diff != "" {
+				t.Errorf("LoadCredentials(..), -want, +got:\n%s", diff)
+			}
+
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if diff := cmp.Diff(tc.want.err, gotErr); diff != "" {
+				t.Errorf("LoadCredentials(..), -want error, +got error:\n%s", diff)
 			}
 		})
 	}
