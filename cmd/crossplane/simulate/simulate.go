@@ -51,7 +51,6 @@ import (
 	pkgv1 "github.com/crossplane/crossplane/apis/v2/pkg/v1"
 	pkgv1beta1 "github.com/crossplane/crossplane/apis/v2/pkg/v1beta1"
 
-	"github.com/crossplane/cli/v2/cmd/crossplane/common/load"
 	"github.com/crossplane/cli/v2/internal/async"
 	"github.com/crossplane/cli/v2/internal/containerruntime"
 	"github.com/crossplane/cli/v2/internal/diffserver"
@@ -61,6 +60,7 @@ import (
 	"github.com/crossplane/cli/v2/internal/project/projectfile"
 	"github.com/crossplane/cli/v2/internal/terminal"
 	clixpkg "github.com/crossplane/cli/v2/internal/xpkg"
+	"github.com/crossplane/cli/v2/pkg/load"
 
 	_ "embed"
 )
