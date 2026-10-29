@@ -371,6 +371,12 @@ func TestLoadCredentials(t *testing.T) {
 				err: "Deployment/not-a-secret is not a v1 Secret",
 			},
 		},
+		"SecretWithInvalidBase64Data": {
+			file: "testdata/credentials-invalid-base64.yaml",
+			want: want{
+				err: "cannot parse YAML secret manifest: error unmarshaling JSON: while decoding JSON: illegal base64 data at input byte 3",
+			},
+		},
 	}
 
 	for name, tc := range cases {
