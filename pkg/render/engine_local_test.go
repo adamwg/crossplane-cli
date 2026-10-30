@@ -29,6 +29,8 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
+
 	renderv1alpha1 "github.com/crossplane/cli/v2/proto/render/v1alpha1"
 )
 
@@ -105,6 +107,9 @@ func runRenderHelper(mode string) {
 	case "hard-fail":
 		fmt.Fprint(os.Stderr, "the binary is sad")
 		os.Exit(1)
+	case "stale":
+		fmt.Fprint(os.Stderr, "crossplane: error: unexpected argument internal")
+		os.Exit(80)
 	default:
 		fmt.Fprintf(os.Stderr, "helper: unknown mode %q\n", mode)
 		os.Exit(127)
@@ -138,6 +143,8 @@ func TestLocalRenderEngineRender(t *testing.T) {
 		wantErr              bool
 		wantInErr            []string
 		wantSingleOccurrence []string
+		wantIs               error
+		wantNotIs            error
 	}
 
 	cases := map[string]struct {
@@ -187,6 +194,18 @@ func TestLocalRenderEngineRender(t *testing.T) {
 					"exit status 1",
 				},
 				wantSingleOccurrence: []string{"the binary is sad"},
+				wantNotIs:            ErrStaleRenderBackend,
+			},
+		},
+		"StaleRenderBackend": {
+			reason: "A backend that lacks `internal render` is reported as ErrStaleRenderBackend, matchable through further wrapping, with the stderr message unchanged.",
+			args:   args{mode: "stale"},
+			want: want{
+				wantErr: true,
+				wantInErr: []string{
+					"crossplane internal render returned error with output: crossplane: error: unexpected argument internal",
+				},
+				wantIs: ErrStaleRenderBackend,
 			},
 		},
 	}
@@ -224,6 +243,15 @@ func TestLocalRenderEngineRender(t *testing.T) {
 				if got := strings.Count(err.Error(), s); got != 1 {
 					t.Errorf("\n%s\nRender(...): error %q contains %q %d times, want exactly 1 (double-formatting bug?)", tc.reason, err.Error(), s, got)
 				}
+			}
+
+			// Wrap once more to check the sentinel survives callers' wrapping.
+			wrapped := errors.Wrap(err, "caller")
+			if tc.want.wantIs != nil && !errors.Is(wrapped, tc.want.wantIs) {
+				t.Errorf("\n%s\nRender(...): errors.Is(%q, %v) = false, want true", tc.reason, err, tc.want.wantIs)
+			}
+			if tc.want.wantNotIs != nil && errors.Is(wrapped, tc.want.wantNotIs) {
+				t.Errorf("\n%s\nRender(...): errors.Is(%q, %v) = true, want false", tc.reason, err, tc.want.wantNotIs)
 			}
 
 			if diff := cmp.Diff(tc.want.rsp, rsp, protocmp.Transform()); diff != "" {
