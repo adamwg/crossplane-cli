@@ -18,7 +18,6 @@ package render
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -234,7 +233,7 @@ func TestDockerRenderEngineRender(t *testing.T) {
 			}
 
 			// Wrap once more to check the sentinel survives callers' wrapping.
-			wrapped := fmt.Errorf("caller: %w", err)
+			wrapped := errors.Wrap(err, "caller")
 			if tc.want.wantIs != nil && !errors.Is(wrapped, tc.want.wantIs) {
 				t.Errorf("\n%s\nRender(...): errors.Is(%q, %v) = false, want true", tc.reason, err, tc.want.wantIs)
 			}
