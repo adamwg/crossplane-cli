@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package render implements helpers shared by the render subcommands
-// (xr and op).
+// Package render implements the composition and operation rendering engine,
+// available for import by external tools interacting with Crossplane.
 package render
 
 import (
