@@ -18,12 +18,15 @@ package render
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"path/filepath"
 
 	"github.com/spf13/afero"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
@@ -123,13 +126,37 @@ func LoadCredentials(fs afero.Fs, file string) ([]corev1.Secret, error) {
 	for _, y := range stream {
 		s := &corev1.Secret{}
 		if err := yaml.Unmarshal(y, s); err != nil {
+			// Decoding a non-Secret document (e.g. a ConfigMap with
+			// plain-text data) into a Secret can fail with a confusing
+			// base64 error before we ever see its kind. Only on failure,
+			// decode just the metadata to report the wrong kind clearly.
+			m := &metav1.PartialObjectMetadata{}
+			if merr := yaml.Unmarshal(y, m); merr == nil && m.GroupVersionKind() != corev1.SchemeGroupVersion.WithKind("Secret") {
+				return nil, errNotSecret(m.GroupVersionKind(), m.GetName())
+			}
 			return nil, errors.Wrap(err, "cannot parse YAML secret manifest")
+		}
+
+		// A non-Secret document without Secret-incompatible fields decodes
+		// cleanly, so check the kind too rather than silently treating it
+		// as an empty Secret.
+		if gvk := s.GroupVersionKind(); gvk != corev1.SchemeGroupVersion.WithKind("Secret") {
+			return nil, errNotSecret(gvk, s.GetName())
 		}
 
 		secrets = append(secrets, *s)
 	}
 
 	return secrets, nil
+}
+
+// errNotSecret reports a credentials document whose type is not a v1 Secret.
+func errNotSecret(gvk schema.GroupVersionKind, name string) error {
+	doc := "unnamed credentials document"
+	if name != "" {
+		doc = fmt.Sprintf("credentials document %q", name)
+	}
+	return errors.Errorf("%s has apiVersion %q and kind %q; set apiVersion: v1 and kind: Secret", doc, gvk.GroupVersion().String(), gvk.Kind)
 }
 
 // LoadRequiredResources from a stream of YAML manifests.
