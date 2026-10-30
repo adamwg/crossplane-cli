@@ -38,6 +38,7 @@ import (
 	"github.com/crossplane/cli/v2/apis/dev/v1alpha1"
 	"github.com/crossplane/cli/v2/internal/config"
 	"github.com/crossplane/cli/v2/internal/dependency"
+	"github.com/crossplane/cli/v2/internal/project"
 	"github.com/crossplane/cli/v2/internal/project/projectfile"
 	"github.com/crossplane/cli/v2/internal/schemas/generator"
 	"github.com/crossplane/cli/v2/internal/terminal"
@@ -88,20 +89,10 @@ func (c *generateCmd) AfterApply(cfg *config.Config) error {
 
 	c.proj = proj
 	c.apisFS = afero.NewBasePathFs(c.projFS, proj.Spec.Paths.APIs)
-	cacheDir := c.CacheDir
-	if cacheDir == "" {
-		cacheDir = dependency.DefaultCacheDir()
-	}
-
-	client, err := clixpkg.NewClient(
-		clixpkg.NewRemoteFetcher(),
-		clixpkg.WithCacheDir(afero.NewOsFs(), cacheDir),
-		clixpkg.WithImageConfigs(proj.Spec.ImageConfigs),
-	)
+	client, resolver, err := project.NewXpkgClient(c.CacheDir, clixpkg.WithImageConfigs(proj.Spec.ImageConfigs))
 	if err != nil {
 		return err
 	}
-	resolver := clixpkg.NewResolver(client)
 
 	c.depManager = dependency.NewManager(proj, c.projFS,
 		dependency.WithProjectFile(filepath.Base(c.ProjectFile)),
