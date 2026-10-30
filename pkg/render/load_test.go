@@ -362,13 +362,37 @@ func TestLoadCredentials(t *testing.T) {
 		"ConfigMapWithPlainTextData": {
 			file: "testdata/credentials-configmap.yaml",
 			want: want{
-				err: "ConfigMap/not-a-secret is not a v1 Secret",
+				err: `credentials document "not-a-secret" has apiVersion "v1" and kind "ConfigMap"; set apiVersion: v1 and kind: Secret`,
 			},
 		},
 		"DeploymentWithNoData": {
 			file: "testdata/credentials-deployment.yaml",
 			want: want{
-				err: "Deployment/not-a-secret is not a v1 Secret",
+				err: `credentials document "not-a-secret" has apiVersion "apps/v1" and kind "Deployment"; set apiVersion: v1 and kind: Secret`,
+			},
+		},
+		"MissingKind": {
+			file: "testdata/credentials-missing-kind.yaml",
+			want: want{
+				err: `credentials document "creds" has apiVersion "v1" and kind ""; set apiVersion: v1 and kind: Secret`,
+			},
+		},
+		"MissingAPIVersion": {
+			file: "testdata/credentials-missing-apiversion.yaml",
+			want: want{
+				err: `credentials document "creds" has apiVersion "" and kind "Secret"; set apiVersion: v1 and kind: Secret`,
+			},
+		},
+		"WrongAPIVersion": {
+			file: "testdata/credentials-wrong-apiversion.yaml",
+			want: want{
+				err: `credentials document "creds" has apiVersion "v2" and kind "Secret"; set apiVersion: v1 and kind: Secret`,
+			},
+		},
+		"Unnamed": {
+			file: "testdata/credentials-unnamed.yaml",
+			want: want{
+				err: `unnamed credentials document has apiVersion "v1" and kind "ConfigMap"; set apiVersion: v1 and kind: Secret`,
 			},
 		},
 		"SecretWithInvalidBase64Data": {
