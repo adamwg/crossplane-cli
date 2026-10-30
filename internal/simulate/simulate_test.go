@@ -18,10 +18,6 @@ package simulate
 
 import (
 	"context"
-	"net/netip"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +39,6 @@ import (
 	"github.com/crossplane/crossplane/apis/v2/pkg"
 	pkgv1 "github.com/crossplane/crossplane/apis/v2/pkg/v1"
 
-	"github.com/crossplane/cli/v2/internal/diffserver"
 	"github.com/crossplane/cli/v2/internal/plan"
 )
 
@@ -97,207 +92,7 @@ func notSupportedErr(t *testing.T) error {
 	return st.Err()
 }
 
-func TestLoadProviderInputs(t *testing.T) {
-	const ec2 = "xpkg.upbound.io/upbound/provider-aws-ec2:v2.9.0"
-
-	cases := map[string]struct {
-		reason   string
-		manifest string
-		want     []diffserver.Input
-		wantErr  string // A substring of the error; empty means no error.
-	}{
-		"DockerAnnotations": {
-			reason: "The Docker runtime is the default; its annotations override the publish and target addresses per provider.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime-docker-publish-address: 0.0.0.0
-    simulate.crossplane.io/runtime-docker-target: 192.168.64.2
-spec:
-  package: ` + ec2 + `
----
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-s3
-spec:
-  package: xpkg.upbound.io/upbound/provider-aws-s3:v2.9.0
-`,
-			want: []diffserver.Input{
-				{Image: ec2, PublishAddress: netip.MustParseAddr("0.0.0.0"), Target: "192.168.64.2"},
-				{Image: "xpkg.upbound.io/upbound/provider-aws-s3:v2.9.0"},
-			},
-		},
-		"NotAProvider": {
-			reason:   "Only Provider manifests can be run as diff servers.",
-			manifest: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
-			wantErr:  "expected only Provider manifests",
-		},
-		"StopCleanupRejected": {
-			reason: "Render's Stop cleanup policy is deliberately unsupported for diff servers.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime-docker-cleanup: Stop
-spec:
-  package: ` + ec2 + `
-`,
-			wantErr: "invalid",
-		},
-		"DevelopmentDefaults": {
-			reason: "A Development provider defaults to upjet's diff server address and needs no spec.package.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime: Development
-    simulate.crossplane.io/runtime-development-api-groups: ec2.aws.upbound.io, ec2.aws.m.upbound.io
-`,
-			want: []diffserver.Input{{
-				Runtime:           diffserver.RuntimeDevelopment,
-				Name:              "provider-aws-ec2",
-				DevelopmentTarget: "localhost:9099",
-				APIGroups:         []string{"ec2.aws.upbound.io", "ec2.aws.m.upbound.io"},
-			}},
-		},
-		"DevelopmentTargetIgnoresDockerAnnotations": {
-			reason: "A Development provider takes its target from the annotation; spec.package and the Docker annotations do not apply to it, as in render.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime: Development
-    simulate.crossplane.io/runtime-development-target: localhost:9444
-    simulate.crossplane.io/runtime-development-api-groups: ec2.aws.upbound.io
-    simulate.crossplane.io/runtime-docker-publish-address: 0.0.0.0
-    simulate.crossplane.io/runtime-docker-cleanup: Stop
-spec:
-  package: ` + ec2 + `
-`,
-			want: []diffserver.Input{{
-				Runtime:           diffserver.RuntimeDevelopment,
-				Name:              "provider-aws-ec2",
-				DevelopmentTarget: "localhost:9444",
-				APIGroups:         []string{"ec2.aws.upbound.io"},
-			}},
-		},
-		"DevelopmentWithoutAPIGroups": {
-			reason: "Nothing is fetched for a Development provider, so it must declare the API groups it serves.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime: Development
-    simulate.crossplane.io/runtime-development-api-groups: " , "
-`,
-			wantErr: AnnotationKeyDevelopmentAPIGroups,
-		},
-		"DevelopmentGroupsOverlap": {
-			reason: "An API group can route to only one development diff server.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime: Development
-    simulate.crossplane.io/runtime-development-api-groups: ec2.aws.upbound.io
----
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2-fork
-  annotations:
-    simulate.crossplane.io/runtime: Development
-    simulate.crossplane.io/runtime-development-target: localhost:9100
-    simulate.crossplane.io/runtime-development-api-groups: ec2.aws.upbound.io
-`,
-			wantErr: "both declare the API group",
-		},
-		"UnknownRuntime": {
-			reason: "Runtime values other than Docker and Development are rejected, as in render.",
-			manifest: `---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-aws-ec2
-  annotations:
-    simulate.crossplane.io/runtime: Podman
-spec:
-  package: ` + ec2 + `
-`,
-			wantErr: "unsupported",
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "providers.yaml")
-			if err := os.WriteFile(path, []byte(tc.manifest), 0o600); err != nil {
-				t.Fatalf("cannot write manifest: %v", err)
-			}
-
-			got, err := loadProviderInputs(path)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("%s\nloadProviderInputs(...): want an error containing %q, got %v", tc.reason, tc.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("%s\nloadProviderInputs(...): unexpected error: %v", tc.reason, err)
-			}
-			if diff := cmp.Diff(tc.want, got, cmp.Comparer(func(a, b netip.Addr) bool { return a == b })); diff != "" {
-				t.Errorf("%s\nloadProviderInputs(...): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
-
-func TestNeedsDocker(t *testing.T) {
-	cases := map[string]struct {
-		reason string
-		inputs []diffserver.Input
-		want   bool
-	}{
-		"NoInputs": {
-			reason: "Nothing to run means nothing to run in Docker.",
-			want:   false,
-		},
-		"OnlyDevelopment": {
-			reason: "Development providers connect to servers the user runs, so Docker is not needed.",
-			inputs: []diffserver.Input{{Runtime: diffserver.RuntimeDevelopment, Name: "dev"}},
-			want:   false,
-		},
-		"MixedRuntimes": {
-			reason: "One provider whose image runs as a container is enough to need Docker.",
-			inputs: []diffserver.Input{{Runtime: diffserver.RuntimeDevelopment, Name: "dev"}, {Image: "xpkg.example.org/provider:v1"}},
-			want:   true,
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			if got := needsDocker(tc.inputs); got != tc.want {
-				t.Errorf("%s\nneedsDocker(...): want %t, got %t", tc.reason, tc.want, got)
-			}
-		})
-	}
-}
-
-func TestSimulateOne(t *testing.T) {
+func TestPlanner(t *testing.T) {
 	ctx := context.Background()
 
 	s := runtime.NewScheme()
@@ -306,8 +101,6 @@ func TestSimulateOne(t *testing.T) {
 
 	rm := meta.NewDefaultRESTMapper([]schema.GroupVersion{vpcGVK.GroupVersion()})
 	rm.Add(vpcGVK, meta.RESTScopeRoot)
-
-	cmd := &Cmd{Timeout: time.Second}
 
 	t.Run("RoutedUpdate", func(t *testing.T) {
 		live := vpc("my-vpc", "10.0.0.0/16")
@@ -321,13 +114,13 @@ func TestSimulateOne(t *testing.T) {
 			}},
 		}}
 
-		got := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{client: pc}, newObjectStoreCache(), newCRDDefaults(), vpc("my-vpc", "10.1.0.0/16"))
+		got := NewPlanner(kube, rm, "default", &fakeRouter{client: pc}, time.Second).Plan(ctx, vpc("my-vpc", "10.1.0.0/16"))
 
 		if got.Action != plan.ActionUpdate || got.Approximate || got.Error != "" {
-			t.Errorf("simulateOne(...): want a provider-computed update, got %+v", got)
+			t.Errorf("Plan(...): want a provider-computed update, got %+v", got)
 		}
 		if pc.got.GetActualResource() == nil {
-			t.Errorf("simulateOne(...): want the live resource sent as actual state")
+			t.Errorf("Plan(...): want the live resource sent as actual state")
 		}
 	})
 
@@ -335,13 +128,13 @@ func TestSimulateOne(t *testing.T) {
 		kube := fake.NewClientBuilder().WithScheme(s).Build()
 		pc := &fakePlanClient{rsp: &diffv1alpha1.PlanResponse{Action: diffv1alpha1.Action_ACTION_CREATE}}
 
-		got := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{client: pc}, newObjectStoreCache(), newCRDDefaults(), vpc("new-vpc", "10.0.0.0/16"))
+		got := NewPlanner(kube, rm, "default", &fakeRouter{client: pc}, time.Second).Plan(ctx, vpc("new-vpc", "10.0.0.0/16"))
 
 		if got.Action != plan.ActionCreate || got.Error != "" {
-			t.Errorf("simulateOne(...): want a create, got %+v", got)
+			t.Errorf("Plan(...): want a create, got %+v", got)
 		}
 		if pc.got.GetActualResource() != nil {
-			t.Errorf("simulateOne(...): want no actual state for a missing live resource")
+			t.Errorf("Plan(...): want no actual state for a missing live resource")
 		}
 	})
 
@@ -349,10 +142,10 @@ func TestSimulateOne(t *testing.T) {
 		live := vpc("my-vpc", "10.0.0.0/16")
 		kube := fake.NewClientBuilder().WithScheme(s).WithObjects(live).Build()
 
-		got := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{}, newObjectStoreCache(), newCRDDefaults(), vpc("my-vpc", "10.1.0.0/16"))
+		got := NewPlanner(kube, rm, "default", &fakeRouter{}, time.Second).Plan(ctx, vpc("my-vpc", "10.1.0.0/16"))
 
 		if !got.Approximate || got.Action != plan.ActionUpdate {
-			t.Errorf("simulateOne(...): want an approximate update fallback, got %+v", got)
+			t.Errorf("Plan(...): want an approximate update fallback, got %+v", got)
 		}
 	})
 
@@ -361,10 +154,10 @@ func TestSimulateOne(t *testing.T) {
 		kube := fake.NewClientBuilder().WithScheme(s).WithObjects(live).Build()
 		pc := &fakePlanClient{err: notSupportedErr(t)}
 
-		got := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{client: pc}, newObjectStoreCache(), newCRDDefaults(), vpc("my-vpc", "10.1.0.0/16"))
+		got := NewPlanner(kube, rm, "default", &fakeRouter{client: pc}, time.Second).Plan(ctx, vpc("my-vpc", "10.1.0.0/16"))
 
 		if !got.Approximate || got.Action != plan.ActionUpdate {
-			t.Errorf("simulateOne(...): want an approximate fallback on DIFF_COMPUTATION_NOT_SUPPORTED, got %+v", got)
+			t.Errorf("Plan(...): want an approximate fallback on DIFF_COMPUTATION_NOT_SUPPORTED, got %+v", got)
 		}
 	})
 
@@ -422,11 +215,11 @@ func TestSimulateOne(t *testing.T) {
 				return c.Get(ctx, key, obj, opts...)
 			}}).Build()
 
-		crds := newCRDDefaults()
-		got := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{}, newObjectStoreCache(), crds, vpc("my-vpc", "10.1.0.0/16"))
+		planner := NewPlanner(kube, rm, "default", &fakeRouter{}, time.Second)
+		got := planner.Plan(ctx, vpc("my-vpc", "10.1.0.0/16"))
 
 		if !got.Approximate || got.Action != plan.ActionUpdate {
-			t.Fatalf("simulateOne(...): want an approximate update fallback, got %+v", got)
+			t.Fatalf("Plan(...): want an approximate update fallback, got %+v", got)
 		}
 		want := []plan.FieldChange{{
 			Path:    "spec.forProvider.cidrBlock",
@@ -434,16 +227,16 @@ func TestSimulateOne(t *testing.T) {
 			Planned: &plan.Value{Value: "10.1.0.0/16"},
 		}}
 		if diff := cmp.Diff(want, got.Changes); diff != "" {
-			t.Errorf("simulateOne(...): want only the real change, no removals of defaulted fields, -want, +got:\n%s", diff)
+			t.Errorf("Plan(...): want only the real change, no removals of defaulted fields, -want, +got:\n%s", diff)
 		}
 
 		// An identical manifest plans as a no-op, and the CRD is served from
 		// the cache rather than fetched again.
-		if again := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{}, newObjectStoreCache(), crds, vpc("my-vpc", "10.0.0.0/16")); again.Action != plan.ActionNoOp {
-			t.Errorf("simulateOne(...): want a no-op for a manifest omitting only defaulted fields, got %+v", again)
+		if again := planner.Plan(ctx, vpc("my-vpc", "10.0.0.0/16")); again.Action != plan.ActionNoOp {
+			t.Errorf("Plan(...): want a no-op for a manifest omitting only defaulted fields, got %+v", again)
 		}
 		if crdGets != 1 {
-			t.Errorf("simulateOne(...): want 1 CRD fetch for 2 resources of the same kind, got %d", crdGets)
+			t.Errorf("Plan(...): want 1 CRD fetch for 2 resources of the same kind, got %d", crdGets)
 		}
 	})
 
@@ -451,10 +244,10 @@ func TestSimulateOne(t *testing.T) {
 		kube := fake.NewClientBuilder().WithScheme(s).Build()
 		pc := &fakePlanClient{err: status.Error(codes.Internal, "boom")}
 
-		got := cmd.simulateOne(ctx, kube, rm, "default", &fakeRouter{client: pc}, newObjectStoreCache(), newCRDDefaults(), vpc("my-vpc", "10.1.0.0/16"))
+		got := NewPlanner(kube, rm, "default", &fakeRouter{client: pc}, time.Second).Plan(ctx, vpc("my-vpc", "10.1.0.0/16"))
 
 		if got.Error == "" {
-			t.Errorf("simulateOne(...): want a per-resource error, got %+v", got)
+			t.Errorf("Plan(...): want a per-resource error, got %+v", got)
 		}
 	})
 
@@ -492,16 +285,16 @@ func TestSimulateOne(t *testing.T) {
 		kube := fake.NewClientBuilder().WithScheme(seedScheme).WithObjects(pc, secret).Build()
 		pc2 := &fakePlanClient{rsp: &diffv1alpha1.PlanResponse{Action: diffv1alpha1.Action_ACTION_CREATE}}
 
-		got := cmd.simulateOne(ctx, kube, seedRM, "default", &fakeRouter{client: pc2}, newObjectStoreCache(), newCRDDefaults(), vpc("my-vpc", "10.0.0.0/16"))
+		got := NewPlanner(kube, seedRM, "default", &fakeRouter{client: pc2}, time.Second).Plan(ctx, vpc("my-vpc", "10.0.0.0/16"))
 
 		if got.Error != "" {
-			t.Fatalf("simulateOne(...): unexpected error: %s", got.Error)
+			t.Fatalf("Plan(...): unexpected error: %s", got.Error)
 		}
 		if n := len(pc2.got.GetKubernetesObjectStore()); n != 1 {
-			t.Errorf("simulateOne(...): want the ProviderConfig in the object store, got %d objects", n)
+			t.Errorf("Plan(...): want the ProviderConfig in the object store, got %d objects", n)
 		}
 		if k := pc2.got.GetKubernetesObjectStore()[0].GetFields()["kind"].GetStringValue(); k != "ProviderConfig" {
-			t.Errorf("simulateOne(...): want a ProviderConfig in the object store, got %q", k)
+			t.Errorf("Plan(...): want a ProviderConfig in the object store, got %q", k)
 		}
 	})
 
@@ -604,13 +397,13 @@ func TestSimulateOne(t *testing.T) {
 			"kind":       "Key",
 			"metadata":   map[string]any{"name": "k"},
 		}}
-		got, err := relevantProviderImages(ctx, kube, rm, []*unstructured.Unstructured{vpc("a", "10.0.0.0/16"), vpc("b", "10.1.0.0/16"), unserved}, false)
+		got, err := RelevantProviderImages(ctx, kube, rm, []*unstructured.Unstructured{vpc("a", "10.0.0.0/16"), vpc("b", "10.1.0.0/16"), unserved}, false)
 		if err != nil {
-			t.Fatalf("relevantProviderImages(...): unexpected error: %v", err)
+			t.Fatalf("RelevantProviderImages(...): unexpected error: %v", err)
 		}
 		want := []string{"xpkg.upbound.io/upbound/provider-aws-ec2:v2.9.0"}
 		if len(got) != 1 || got[0] != want[0] {
-			t.Errorf("relevantProviderImages(...): want %v, got %v", want, got)
+			t.Errorf("RelevantProviderImages(...): want %v, got %v", want, got)
 		}
 	})
 
@@ -620,10 +413,10 @@ func TestSimulateOne(t *testing.T) {
 		emptyRM := meta.NewDefaultRESTMapper(nil)
 		pc := &fakePlanClient{rsp: &diffv1alpha1.PlanResponse{Action: diffv1alpha1.Action_ACTION_CREATE}}
 
-		got := cmd.simulateOne(ctx, kube, emptyRM, "default", &fakeRouter{client: pc}, newObjectStoreCache(), newCRDDefaults(), vpc("my-vpc", "10.0.0.0/16"))
+		got := NewPlanner(kube, emptyRM, "default", &fakeRouter{client: pc}, time.Second).Plan(ctx, vpc("my-vpc", "10.0.0.0/16"))
 
 		if got.Action != plan.ActionCreate || got.Error != "" {
-			t.Errorf("simulateOne(...): want a create for an unserved kind, got %+v", got)
+			t.Errorf("Plan(...): want a create for an unserved kind, got %+v", got)
 		}
 	})
 }
