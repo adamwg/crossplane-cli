@@ -39,11 +39,6 @@ const DefaultCrossplaneImage = "xpkg.crossplane.io/crossplane/crossplane"
 // this condition match it with errors.Is.
 var ErrStaleRenderBackend = errors.New("render backend predates `crossplane internal render`")
 
-// staleRenderBackendSignature is the kong usage error a crossplane CLI that
-// lacks the `internal` command prints when asked to run `internal render`. It
-// cannot come from a pipeline or connectivity failure on a current backend.
-const staleRenderBackendSignature = "unexpected argument internal"
-
 // staleRenderBackendError marks err as ErrStaleRenderBackend without changing
 // its message.
 type staleRenderBackendError struct{ err error }
@@ -55,6 +50,11 @@ func (e *staleRenderBackendError) Is(target error) bool { return target == ErrSt
 // classifyRenderError marks err as ErrStaleRenderBackend when the backend's
 // stderr carries the stale-backend signature, and otherwise returns it as is.
 func classifyRenderError(err error, stderr []byte) error {
+	// staleRenderBackendSignature is the kong usage error a crossplane CLI that
+	// lacks the `internal` command prints when asked to run `internal render`. It
+	// cannot come from a pipeline or connectivity failure on a current backend.
+	const staleRenderBackendSignature = "unexpected argument internal"
+
 	if err == nil || !bytes.Contains(stderr, []byte(staleRenderBackendSignature)) {
 		return err
 	}
